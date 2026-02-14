@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>McGPT Launcher</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <h1>McGPT Launcher</h1>
+    <p class="subtitle">Save server/account profiles, then connect your Mineflayer bot.</p>
+
+    <section class="panel-grid">
+      <article class="panel">
+        <h2>Server Profile</h2>
+        <form id="server-form">
+          <input type="hidden" id="server-id" />
+          <label>
+            Label
+            <input id="server-label" required placeholder="My SMP" />
+          </label>
+          <label>
+            Host
+            <input id="server-host" required placeholder="play.example.com" />
+          </label>
+          <label>
+            Port
+            <input id="server-port" type="number" value="25565" min="1" max="65535" required />
+          </label>
+          <label>
+            Version
+            <input id="server-version" placeholder="auto (or e.g. 1.21.1)" value="auto" />
+          </label>
+          <button type="submit">Save Server</button>
+        </form>
+      </article>
+
+      <article class="panel">
+        <h2>Account Profile</h2>
+        <form id="account-form">
+          <input type="hidden" id="account-id" />
+          <label>
+            Label
+            <input id="account-label" required placeholder="Main Microsoft" />
+          </label>
+          <label>
+            Username / Email
+            <input id="account-username" required placeholder="name@example.com or offline name" />
+          </label>
+          <label>
+            Auth
+            <select id="account-auth">
+              <option value="microsoft">microsoft</option>
+              <option value="offline">offline</option>
+            </select>
+          </label>
+          <button type="submit">Save Account</button>
+        </form>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Connect</h2>
+      <div class="row">
+        <label>
+          Server
+          <select id="server-select"></select>
+        </label>
+        <label>
+          Account
+          <select id="account-select"></select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="connect-btn">Connect</button>
+        <button id="disconnect-btn" class="secondary">Disconnect</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Status</h2>
+      <ul id="status-log"></ul>
+    </section>
+  </main>
+  <script src="./renderer.js"></script>
+</body>
+</html>

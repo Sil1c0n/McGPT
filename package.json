@@ -1,0 +1,42 @@
+{
+  "name": "mcgpt-desktop",
+  "version": "0.1.0",
+  "description": "Mineflayer desktop launcher with server/account profiles",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win nsis",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js"
+  },
+  "keywords": [
+    "mineflayer",
+    "minecraft",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "electron-store": "^10.0.0",
+    "mineflayer": "^4.23.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.mcgpt.desktop",
+    "productName": "McGPT Launcher",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  }
+}
