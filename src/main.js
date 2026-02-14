@@ -130,12 +130,28 @@ async function checkForPackagedUpdates() {
     };
   }
 
-  const result = await autoUpdater.checkForUpdates();
-  return {
-    mode: 'packaged',
-    updated: Boolean(result?.updateInfo?.version),
-    message: 'Checked GitHub releases for app updates.'
-  };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return {
+      mode: 'packaged',
+      updated: Boolean(result?.updateInfo?.version),
+      message: 'Checked GitHub releases for app updates.'
+    };
+  } catch (error) {
+    const message = String(error?.message || 'Unknown updater error');
+    const missingReleaseMetadata = message.includes('latest.yml') && message.includes('404');
+
+    if (missingReleaseMetadata) {
+      return {
+        mode: 'packaged',
+        updated: false,
+        message:
+          'Launcher release metadata is missing (latest.yml not found). Publish a full electron-builder release before using packaged auto-updates.'
+      };
+    }
+
+    throw error;
+  }
 }
 
 async function checkForAppUpdates() {
