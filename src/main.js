@@ -3,6 +3,7 @@ const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const mineflayer = require('mineflayer');
+const { Authflow } = require('prismarine-auth');
 
 const execFileAsync = promisify(execFile);
 const AUTO_UPDATE_INTERVAL_MS = 10 * 60 * 1000;
@@ -55,6 +56,33 @@ function getSupportedVersions() {
   }
 
   return [];
+}
+
+function getLatestSupportedVersion() {
+  const supportedVersions = getSupportedVersions();
+
+  if (!supportedVersions.length) {
+    return false;
+  }
+
+  const sorted = [...supportedVersions].sort((a, b) => {
+    const partsA = a.split('.').map((value) => Number.parseInt(value, 10));
+    const partsB = b.split('.').map((value) => Number.parseInt(value, 10));
+    const maxLength = Math.max(partsA.length, partsB.length);
+
+    for (let index = 0; index < maxLength; index += 1) {
+      const aValue = Number.isFinite(partsA[index]) ? partsA[index] : 0;
+      const bValue = Number.isFinite(partsB[index]) ? partsB[index] : 0;
+
+      if (aValue !== bValue) {
+        return bValue - aValue;
+      }
+    }
+
+    return 0;
+  });
+
+  return sorted[0];
 }
 
 function normalizeVersion(version) {
@@ -334,10 +362,13 @@ function registerIpcHandlers() {
 
   ipcMain.handle('accounts:save', async (_, account) => {
     const accounts = store.get('accounts');
+    const id = account.id || toId();
+    const auth = account.auth || 'offline';
     const accountWithId = {
       ...account,
-      id: account.id || toId(),
-      auth: account.auth || 'offline'
+      id,
+      auth,
+      cacheKey: auth === 'microsoft' ? account.cacheKey || `microsoft-${id}` : undefined
     };
 
     const existingIndex = accounts.findIndex((savedAccount) => savedAccount.id === accountWithId.id);
@@ -349,6 +380,49 @@ function registerIpcHandlers() {
 
     store.set('accounts', accounts);
     return accounts;
+  });
+
+  ipcMain.handle('accounts:authenticate-microsoft', async (_, payload = {}) => {
+    const label = String(payload.label || '').trim();
+    const accountId = toId();
+    const cacheKey = `microsoft-${accountId}`;
+    const profilesFolder = path.join(app.getPath('userData'), 'profiles');
+
+    emitStatus('Starting Microsoft authentication flow...', 'info');
+
+    const flow = new Authflow(cacheKey, profilesFolder, { flow: 'live' }, (code) => {
+      const verifyUri = code?.verificationUri || code?.verification_uri || 'https://microsoft.com/link';
+      const userCode = code?.userCode || code?.user_code || code?.deviceCode || 'unknown';
+
+      emitStatus(`Microsoft login required. Open ${verifyUri} and enter code ${userCode}.`, 'warn');
+
+      shell.openExternal(verifyUri).catch(() => {
+        emitStatus('Could not automatically open browser for Microsoft login code.', 'warn');
+      });
+    });
+
+    const authResult = await flow.getMinecraftJavaToken({ fetchProfile: true });
+    const profileName = authResult?.profile?.name;
+
+    if (!profileName) {
+      throw new Error('Microsoft authentication succeeded, but no Minecraft profile name was returned.');
+    }
+
+    const accounts = store.get('accounts');
+    const account = {
+      id: accountId,
+      label: label || profileName,
+      username: profileName,
+      auth: 'microsoft',
+      cacheKey
+    };
+
+    accounts.push(account);
+    store.set('accounts', accounts);
+
+    emitStatus(`Authenticated and saved Microsoft account: ${account.label} (${profileName}).`, 'success');
+
+    return { accounts, account };
   });
 
   ipcMain.handle('preferences:set', async (_, preferences) => {
@@ -374,11 +448,13 @@ function registerIpcHandlers() {
       throw new Error('Account profile was not found.');
     }
 
+    const requestedVersion = normalizeVersion(server.version);
+    const selectedVersion = requestedVersion || getLatestSupportedVersion();
     const options = {
       host: server.host,
       port: Number(server.port || 25565),
-      version: normalizeVersion(server.version),
-      username: account.username,
+      version: selectedVersion,
+      username: account.auth === 'microsoft' ? account.cacheKey || account.username : account.username,
       auth: account.auth,
       profilesFolder: path.join(app.getPath('userData'), 'profiles'),
       onMsaCode: (code) => {
@@ -395,6 +471,13 @@ function registerIpcHandlers() {
         });
       }
     };
+
+    if (!requestedVersion && selectedVersion) {
+      emitStatus(
+        `Server version is set to auto. Using latest supported protocol ${selectedVersion} to handle newer patch releases.`,
+        'info'
+      );
+    }
 
     emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
 
