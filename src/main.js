@@ -1,18 +1,8 @@
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain } = require('electron');
-const Store = require('electron-store');
 const mineflayer = require('mineflayer');
 
-const store = new Store({
-  defaults: {
-    servers: [],
-    accounts: [],
-    preferences: {
-      selectedServerId: null,
-      selectedAccountId: null
-    }
-  }
-});
+let store;
 
 let mainWindow;
 let bot;
@@ -37,6 +27,10 @@ function toId() {
 }
 
 function getAllConfig() {
+  if (!store) {
+    throw new Error('Application store is not initialized yet.');
+  }
+
   return {
     servers: store.get('servers'),
     accounts: store.get('accounts'),
@@ -75,98 +69,120 @@ function attachBotEvents() {
   });
 }
 
-ipcMain.handle('config:get', async () => getAllConfig());
-
-ipcMain.handle('servers:save', async (_, server) => {
-  const servers = store.get('servers');
-  const serverWithId = {
-    ...server,
-    id: server.id || toId(),
-    port: Number(server.port || 25565),
-    version: server.version || false
-  };
-
-  const existingIndex = servers.findIndex((s) => s.id === serverWithId.id);
-  if (existingIndex >= 0) {
-    servers[existingIndex] = serverWithId;
-  } else {
-    servers.push(serverWithId);
+async function initializeStore() {
+  if (store) {
+    return;
   }
 
-  store.set('servers', servers);
-  return servers;
-});
+  const { default: Store } = await import('electron-store');
+  store = new Store({
+    defaults: {
+      servers: [],
+      accounts: [],
+      preferences: {
+        selectedServerId: null,
+        selectedAccountId: null
+      }
+    }
+  });
+}
 
-ipcMain.handle('accounts:save', async (_, account) => {
-  const accounts = store.get('accounts');
-  const accountWithId = {
-    ...account,
-    id: account.id || toId(),
-    auth: account.auth || 'offline'
-  };
+function registerIpcHandlers() {
+  ipcMain.handle('config:get', async () => getAllConfig());
 
-  const existingIndex = accounts.findIndex((a) => a.id === accountWithId.id);
-  if (existingIndex >= 0) {
-    accounts[existingIndex] = accountWithId;
-  } else {
-    accounts.push(accountWithId);
-  }
+  ipcMain.handle('servers:save', async (_, server) => {
+    const servers = store.get('servers');
+    const serverWithId = {
+      ...server,
+      id: server.id || toId(),
+      port: Number(server.port || 25565),
+      version: server.version || false
+    };
 
-  store.set('accounts', accounts);
-  return accounts;
-});
+    const existingIndex = servers.findIndex((s) => s.id === serverWithId.id);
+    if (existingIndex >= 0) {
+      servers[existingIndex] = serverWithId;
+    } else {
+      servers.push(serverWithId);
+    }
 
-ipcMain.handle('preferences:set', async (_, preferences) => {
-  const merged = { ...store.get('preferences'), ...preferences };
-  store.set('preferences', merged);
-  return merged;
-});
-
-ipcMain.handle('bot:connect', async (_, { serverId, accountId }) => {
-  disconnectBot();
-
-  const servers = store.get('servers');
-  const accounts = store.get('accounts');
-
-  const server = servers.find((item) => item.id === serverId);
-  const account = accounts.find((item) => item.id === accountId);
-
-  if (!server) {
-    throw new Error('Server profile was not found.');
-  }
-
-  if (!account) {
-    throw new Error('Account profile was not found.');
-  }
-
-  const options = {
-    host: server.host,
-    port: Number(server.port || 25565),
-    version: server.version === 'auto' ? false : (server.version || false),
-    username: account.username,
-    auth: account.auth
-  };
-
-  emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
-
-  bot = mineflayer.createBot(options);
-  attachBotEvents();
-
-  store.set('preferences', {
-    selectedServerId: serverId,
-    selectedAccountId: accountId
+    store.set('servers', servers);
+    return servers;
   });
 
-  return { ok: true };
-});
+  ipcMain.handle('accounts:save', async (_, account) => {
+    const accounts = store.get('accounts');
+    const accountWithId = {
+      ...account,
+      id: account.id || toId(),
+      auth: account.auth || 'offline'
+    };
 
-ipcMain.handle('bot:disconnect', async () => {
-  disconnectBot();
-  emitStatus('Disconnect requested from UI.', 'warn');
-  return { ok: true };
-});
+    const existingIndex = accounts.findIndex((a) => a.id === accountWithId.id);
+    if (existingIndex >= 0) {
+      accounts[existingIndex] = accountWithId;
+    } else {
+      accounts.push(accountWithId);
+    }
 
-app.whenReady().then(() => {
+    store.set('accounts', accounts);
+    return accounts;
+  });
+
+  ipcMain.handle('preferences:set', async (_, preferences) => {
+    const merged = { ...store.get('preferences'), ...preferences };
+    store.set('preferences', merged);
+    return merged;
+  });
+
+  ipcMain.handle('bot:connect', async (_, { serverId, accountId }) => {
+    disconnectBot();
+
+    const servers = store.get('servers');
+    const accounts = store.get('accounts');
+
+    const server = servers.find((item) => item.id === serverId);
+    const account = accounts.find((item) => item.id === accountId);
+
+    if (!server) {
+      throw new Error('Server profile was not found.');
+    }
+
+    if (!account) {
+      throw new Error('Account profile was not found.');
+    }
+
+    const options = {
+      host: server.host,
+      port: Number(server.port || 25565),
+      version: server.version === 'auto' ? false : (server.version || false),
+      username: account.username,
+      auth: account.auth
+    };
+
+    emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
+
+    bot = mineflayer.createBot(options);
+    attachBotEvents();
+
+    store.set('preferences', {
+      selectedServerId: serverId,
+      selectedAccountId: accountId
+    });
+
+    return { ok: true };
+  });
+
+  ipcMain.handle('bot:disconnect', async () => {
+    disconnectBot();
+    emitStatus('Disconnect requested from UI.', 'warn');
+    return { ok: true };
+  });
+}
+
+app.whenReady().then(async () => {
+  await initializeStore();
+  registerIpcHandlers();
   createWindow();
 
   app.on('activate', () => {
