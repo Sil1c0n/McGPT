@@ -24,7 +24,10 @@ const fields = {
   serverSelect: document.getElementById('server-select'),
   accountSelect: document.getElementById('account-select'),
   connectBtn: document.getElementById('connect-btn'),
-  disconnectBtn: document.getElementById('disconnect-btn')
+  disconnectBtn: document.getElementById('disconnect-btn'),
+  updateInfo: document.getElementById('update-info'),
+  checkUpdateBtn: document.getElementById('check-update-btn'),
+  updateMineflayerBtn: document.getElementById('update-mineflayer-btn')
 };
 
 function addStatus(message, type = 'info') {
@@ -52,7 +55,8 @@ function renderSelects() {
   fields.accountSelect.replaceChildren();
 
   state.servers.forEach((server) => {
-    fields.serverSelect.append(toOption(`${server.label} (${server.host}:${server.port})`, server.id));
+    const version = server.version || 'auto';
+    fields.serverSelect.append(toOption(`${server.label} (${server.host}:${server.port}, ${version})`, server.id));
   });
 
   state.accounts.forEach((account) => {
@@ -68,12 +72,28 @@ function renderSelects() {
   }
 }
 
+async function refreshUpdateInfo() {
+  try {
+    const updateInfo = await window.api.getUpdateInfo();
+    const supported = updateInfo.supportedVersions.join(', ');
+    fields.updateInfo.textContent = `Installed: ${updateInfo.currentVersion} | Latest: ${updateInfo.latestVersion} | Supported MC: ${supported}`;
+
+    if (updateInfo.hasUpdate) {
+      addStatus(`Mineflayer update available (${updateInfo.latestVersion}). Click "Update Mineflayer" to install.`, 'warn');
+    }
+  } catch (error) {
+    fields.updateInfo.textContent = `Could not check updates: ${error.message}`;
+    addStatus(`Update check failed: ${error.message}`, 'error');
+  }
+}
+
 async function init() {
   const config = await window.api.getConfig();
   state.servers = config.servers;
   state.accounts = config.accounts;
   state.preferences = config.preferences;
   renderSelects();
+  await refreshUpdateInfo();
   addStatus('Launcher ready. Add/save profiles if needed, then connect.', 'success');
 }
 
@@ -136,6 +156,22 @@ fields.connectBtn.addEventListener('click', async () => {
 
 fields.disconnectBtn.addEventListener('click', async () => {
   await window.api.disconnectBot();
+});
+
+fields.checkUpdateBtn.addEventListener('click', async () => {
+  await refreshUpdateInfo();
+});
+
+fields.updateMineflayerBtn.addEventListener('click', async () => {
+  fields.updateMineflayerBtn.disabled = true;
+  try {
+    await window.api.updateMineflayer();
+    await refreshUpdateInfo();
+  } catch (error) {
+    addStatus(`Mineflayer update failed: ${error.message}`, 'error');
+  } finally {
+    fields.updateMineflayerBtn.disabled = false;
+  }
 });
 
 fields.serverSelect.addEventListener('change', async () => {

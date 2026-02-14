@@ -1,6 +1,10 @@
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const mineflayer = require('mineflayer');
+
+const execFileAsync = promisify(execFile);
 
 let store;
 
@@ -42,6 +46,59 @@ function emitStatus(message, type = 'info') {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('bot:status', { message, type, at: new Date().toISOString() });
   }
+}
+
+function getSupportedVersions() {
+  return mineflayer.supportedVersions || [];
+}
+
+function normalizeVersion(version) {
+  if (!version || version === 'auto') {
+    return false;
+  }
+
+  const normalized = String(version).trim();
+  const supportedVersions = getSupportedVersions();
+
+  if (supportedVersions.includes(normalized)) {
+    return normalized;
+  }
+
+  const withoutPatchZero = normalized.replace(/\.0+$/, '');
+  if (supportedVersions.includes(withoutPatchZero)) {
+    return withoutPatchZero;
+  }
+
+  const closest = supportedVersions.find((version) => normalized.startsWith(version));
+  if (closest) {
+    return closest;
+  }
+
+  return normalized;
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+async function getLatestMineflayerVersion() {
+  const npmCommand = getNpmCommand();
+  const { stdout } = await execFileAsync(npmCommand, ['view', 'mineflayer', 'version'], {
+    cwd: app.getAppPath(),
+    timeout: 20000
+  });
+
+  return stdout.trim();
+}
+
+async function updateMineflayerToLatest() {
+  const npmCommand = getNpmCommand();
+  const { stdout, stderr } = await execFileAsync(npmCommand, ['install', 'mineflayer@latest'], {
+    cwd: app.getAppPath(),
+    timeout: 120000
+  });
+
+  return { stdout, stderr };
 }
 
 function disconnectBot() {
@@ -90,13 +147,33 @@ async function initializeStore() {
 function registerIpcHandlers() {
   ipcMain.handle('config:get', async () => getAllConfig());
 
+  ipcMain.handle('app:get-update-info', async () => {
+    const declaredVersion = require('../package.json').dependencies.mineflayer || '';
+    const currentVersion = String(declaredVersion).replace(/^[^0-9]*/, '');
+    const latestVersion = await getLatestMineflayerVersion();
+
+    return {
+      currentVersion,
+      latestVersion,
+      hasUpdate: currentVersion !== latestVersion,
+      supportedVersions: getSupportedVersions()
+    };
+  });
+
+  ipcMain.handle('app:update-mineflayer', async () => {
+    emitStatus('Updating mineflayer to latest version. This may take a minute...', 'info');
+    const result = await updateMineflayerToLatest();
+    emitStatus('Mineflayer update complete. Restart the launcher to apply changes.', 'success');
+    return result;
+  });
+
   ipcMain.handle('servers:save', async (_, server) => {
     const servers = store.get('servers');
     const serverWithId = {
       ...server,
       id: server.id || toId(),
       port: Number(server.port || 25565),
-      version: server.version || false
+      version: normalizeVersion(server.version)
     };
 
     const existingIndex = servers.findIndex((s) => s.id === serverWithId.id);
@@ -155,12 +232,28 @@ function registerIpcHandlers() {
     const options = {
       host: server.host,
       port: Number(server.port || 25565),
-      version: server.version === 'auto' ? false : (server.version || false),
+      version: normalizeVersion(server.version),
       username: account.username,
-      auth: account.auth
+      auth: account.auth,
+      profilesFolder: path.join(app.getPath('userData'), 'profiles'),
+      onMsaCode: (code) => {
+        const verifyUri = code?.verificationUri || 'https://microsoft.com/link';
+        const userCode = code?.userCode || 'unknown';
+        emitStatus(`Microsoft login required. Open ${verifyUri} and enter code ${userCode}.`, 'warn');
+        shell.openExternal(verifyUri).catch(() => {
+          emitStatus('Could not automatically open browser for Microsoft login code.', 'warn');
+        });
+      }
     };
 
     emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
+
+    if (options.version && !getSupportedVersions().includes(options.version)) {
+      emitStatus(
+        `Version ${options.version} is not in this build's supported list (${getSupportedVersions().join(', ')}). Trying anyway.`,
+        'warn'
+      );
+    }
 
     bot = mineflayer.createBot(options);
     attachBotEvents();

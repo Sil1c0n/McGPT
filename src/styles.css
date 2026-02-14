@@ -94,3 +94,9 @@ button.secondary {
   padding: 0.55rem 0.65rem;
   font-size: 0.9rem;
 }
+
+
+.hint {
+  color: #94a3b8;
+  margin: 0.35rem 0 0.5rem;
+}

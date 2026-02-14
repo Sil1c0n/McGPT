@@ -30,7 +30,7 @@
           </label>
           <label>
             Version
-            <input id="server-version" placeholder="auto (or e.g. 1.21.1)" value="auto" />
+            <input id="server-version" placeholder="auto (or e.g. 1.21.1; 1.21.11 normalizes to supported)" value="auto" />
           </label>
           <button type="submit">Save Server</button>
         </form>
@@ -75,6 +75,16 @@
       <div class="actions">
         <button id="connect-btn">Connect</button>
         <button id="disconnect-btn" class="secondary">Disconnect</button>
+      </div>
+    </section>
+
+
+    <section class="panel">
+      <h2>Mineflayer Updates</h2>
+      <p class="hint" id="update-info">Checking installed/supported versions...</p>
+      <div class="actions">
+        <button id="check-update-btn" class="secondary">Check Mineflayer Version</button>
+        <button id="update-mineflayer-btn">Update Mineflayer</button>
       </div>
     </section>
 
