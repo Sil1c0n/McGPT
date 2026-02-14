@@ -79,6 +79,27 @@ function normalizeVersion(version) {
     return closest;
   }
 
+  const requestedParts = normalized.split('.').map((value) => Number.parseInt(value, 10));
+  const hasMajorMinor = requestedParts.length >= 2 && requestedParts.slice(0, 2).every(Number.isFinite);
+  if (hasMajorMinor) {
+    const [requestedMajor, requestedMinor] = requestedParts;
+    const sameMajorMinor = supportedVersions
+      .map((supportedVersion) => ({
+        version: supportedVersion,
+        parts: supportedVersion.split('.').map((value) => Number.parseInt(value, 10))
+      }))
+      .filter(({ parts }) => parts.length >= 2 && parts[0] === requestedMajor && parts[1] === requestedMinor)
+      .sort((a, b) => {
+        const patchA = Number.isFinite(a.parts[2]) ? a.parts[2] : 0;
+        const patchB = Number.isFinite(b.parts[2]) ? b.parts[2] : 0;
+        return patchB - patchA;
+      });
+
+    if (sameMajorMinor.length) {
+      return sameMajorMinor[0].version;
+    }
+  }
+
   return normalized;
 }
 
@@ -88,10 +109,12 @@ function getNpmCommand() {
 
 async function getLatestMineflayerVersion() {
   const npmCommand = getNpmCommand();
-  const { stdout } = await execFileAsync(npmCommand, ['view', 'mineflayer', 'version'], {
+  const execOptions = {
     cwd: app.getAppPath(),
-    timeout: 20000
-  });
+    timeout: 20000,
+    ...(process.platform === 'win32' ? { shell: true } : {})
+  };
+  const { stdout } = await execFileAsync(npmCommand, ['view', 'mineflayer', 'version'], execOptions);
 
   return stdout.trim();
 }
@@ -267,7 +290,13 @@ function registerIpcHandlers() {
   ipcMain.handle('app:get-update-info', async () => {
     const declaredVersion = require('../package.json').dependencies.mineflayer || '';
     const currentVersion = String(declaredVersion).replace(/^[^0-9]*/, '');
-    const latestVersion = await getLatestMineflayerVersion();
+    let latestVersion = currentVersion;
+
+    try {
+      latestVersion = await getLatestMineflayerVersion();
+    } catch (error) {
+      emitStatus(`Could not fetch latest mineflayer version: ${error.message}`, 'warn');
+    }
 
     return {
       currentVersion,
