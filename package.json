@@ -17,7 +17,8 @@
   "license": "MIT",
   "dependencies": {
     "electron-store": "^10.0.0",
-    "mineflayer": "^4.23.0"
+    "mineflayer": "^4.23.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -37,6 +38,11 @@
       "target": [
         "nsis"
       ]
-    }
+    },
+    "publish": [
+      {
+        "provider": "github"
+      }
+    ]
   }
 }

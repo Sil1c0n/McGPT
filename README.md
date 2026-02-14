@@ -5,7 +5,8 @@ Desktop launcher for a Mineflayer bot with:
 - saved **account profiles**
 - connect/disconnect controls
 - status log for login/connect events
-- in-app **Mineflayer update** check + one-click update
+- **automatic launcher updates** from GitHub (source + packaged modes)
+- in-app Mineflayer version visibility
 - Microsoft device-code auth flow (opens browser automatically)
 
 ## 1) Install
@@ -41,7 +42,10 @@ Installer output will be in `dist/`.
 
 - Setting version to `auto` lets Mineflayer negotiate version automatically.
 - If Mineflayer reports a Microsoft device code, the launcher will open the verification page and print the code in Status.
-- Use **Mineflayer Updates** panel to check latest version and update without reinstalling the app.
+- App updates now happen automatically:
+  - **If running from source (`npm start`)**: launcher auto-runs `git pull --ff-only` on startup and every ~10 minutes.
+  - **If running packaged `.exe`**: launcher checks GitHub releases via Electron auto-updater and downloads updates automatically.
+- Use **Launcher Auto-Updates** panel to trigger an immediate update check.
 - This is a clean starter so you can later add:
   - command system
   - Ollama integration

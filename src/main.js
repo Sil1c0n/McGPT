@@ -5,11 +5,12 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const mineflayer = require('mineflayer');
 
 const execFileAsync = promisify(execFile);
+const AUTO_UPDATE_INTERVAL_MS = 10 * 60 * 1000;
 
 let store;
-
 let mainWindow;
 let bot;
+let autoUpdater;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -69,7 +70,7 @@ function normalizeVersion(version) {
     return withoutPatchZero;
   }
 
-  const closest = supportedVersions.find((version) => normalized.startsWith(version));
+  const closest = supportedVersions.find((supportedVersion) => normalized.startsWith(supportedVersion));
   if (closest) {
     return closest;
   }
@@ -91,14 +92,110 @@ async function getLatestMineflayerVersion() {
   return stdout.trim();
 }
 
-async function updateMineflayerToLatest() {
-  const npmCommand = getNpmCommand();
-  const { stdout, stderr } = await execFileAsync(npmCommand, ['install', 'mineflayer@latest'], {
-    cwd: app.getAppPath(),
-    timeout: 120000
+async function checkForSourceUpdates() {
+  const appPath = app.getAppPath();
+
+  await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: appPath,
+    timeout: 5000
   });
 
-  return { stdout, stderr };
+  const { stdout } = await execFileAsync('git', ['pull', '--ff-only'], {
+    cwd: appPath,
+    timeout: 30000
+  });
+
+  const output = stdout.trim();
+  const updated = !output.toLowerCase().includes('already up to date');
+
+  return {
+    mode: 'source',
+    updated,
+    message: updated
+      ? 'Downloaded latest GitHub changes. Restart app to apply new code.'
+      : 'Already on latest GitHub commit.'
+  };
+}
+
+async function checkForPackagedUpdates() {
+  if (!autoUpdater) {
+    return {
+      mode: 'packaged',
+      updated: false,
+      message: 'Packaged updater is not configured.'
+    };
+  }
+
+  const result = await autoUpdater.checkForUpdates();
+  return {
+    mode: 'packaged',
+    updated: Boolean(result?.updateInfo?.version),
+    message: 'Checked GitHub releases for app updates.'
+  };
+}
+
+async function checkForAppUpdates() {
+  if (app.isPackaged) {
+    return checkForPackagedUpdates();
+  }
+
+  return checkForSourceUpdates();
+}
+
+function wirePackagedAutoUpdaterEvents() {
+  if (!autoUpdater) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => emitStatus('Checking for launcher update...', 'info'));
+  autoUpdater.on('update-available', (info) => {
+    emitStatus(`Launcher update found (v${info.version}). Downloading automatically...`, 'warn');
+  });
+  autoUpdater.on('update-not-available', () => emitStatus('Launcher is up to date.', 'success'));
+  autoUpdater.on('download-progress', (progress) => {
+    emitStatus(`Launcher update download: ${Math.round(progress.percent)}%`, 'info');
+  });
+  autoUpdater.on('update-downloaded', () => {
+    emitStatus('Launcher update downloaded. It will install after you close the app.', 'success');
+  });
+  autoUpdater.on('error', (error) => emitStatus(`Launcher update error: ${error.message}`, 'error'));
+}
+
+async function setupLauncherAutoUpdates() {
+  if (app.isPackaged) {
+    try {
+      ({ autoUpdater } = require('electron-updater'));
+      wirePackagedAutoUpdaterEvents();
+      await checkForPackagedUpdates();
+      setInterval(() => {
+        checkForPackagedUpdates().catch((error) => emitStatus(`Updater check failed: ${error.message}`, 'error'));
+      }, AUTO_UPDATE_INTERVAL_MS);
+      return;
+    } catch (error) {
+      emitStatus(`Packaged updater unavailable: ${error.message}`, 'warn');
+    }
+  }
+
+  emitStatus('Development mode: syncing latest code from GitHub automatically.', 'info');
+  try {
+    const result = await checkForSourceUpdates();
+    emitStatus(result.message, result.updated ? 'warn' : 'success');
+  } catch (error) {
+    emitStatus(`GitHub sync failed: ${error.message}`, 'error');
+  }
+
+  setInterval(() => {
+    checkForSourceUpdates()
+      .then((result) => {
+        if (result.updated) {
+          emitStatus(result.message, 'warn');
+        }
+      })
+      .catch((error) => emitStatus(`GitHub sync failed: ${error.message}`, 'error'));
+  }, AUTO_UPDATE_INTERVAL_MS);
 }
 
 function disconnectBot() {
@@ -160,10 +257,9 @@ function registerIpcHandlers() {
     };
   });
 
-  ipcMain.handle('app:update-mineflayer', async () => {
-    emitStatus('Updating mineflayer to latest version. This may take a minute...', 'info');
-    const result = await updateMineflayerToLatest();
-    emitStatus('Mineflayer update complete. Restart the launcher to apply changes.', 'success');
+  ipcMain.handle('app:check-launcher-updates', async () => {
+    const result = await checkForAppUpdates();
+    emitStatus(result.message, result.updated ? 'warn' : 'success');
     return result;
   });
 
@@ -176,7 +272,7 @@ function registerIpcHandlers() {
       version: normalizeVersion(server.version)
     };
 
-    const existingIndex = servers.findIndex((s) => s.id === serverWithId.id);
+    const existingIndex = servers.findIndex((savedServer) => savedServer.id === serverWithId.id);
     if (existingIndex >= 0) {
       servers[existingIndex] = serverWithId;
     } else {
@@ -195,7 +291,7 @@ function registerIpcHandlers() {
       auth: account.auth || 'offline'
     };
 
-    const existingIndex = accounts.findIndex((a) => a.id === accountWithId.id);
+    const existingIndex = accounts.findIndex((savedAccount) => savedAccount.id === accountWithId.id);
     if (existingIndex >= 0) {
       accounts[existingIndex] = accountWithId;
     } else {
@@ -277,6 +373,7 @@ app.whenReady().then(async () => {
   await initializeStore();
   registerIpcHandlers();
   createWindow();
+  await setupLauncherAutoUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
