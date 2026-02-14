@@ -50,7 +50,11 @@ function emitStatus(message, type = 'info') {
 }
 
 function getSupportedVersions() {
-  return mineflayer.supportedVersions || [];
+  if (Array.isArray(mineflayer.supportedVersions)) {
+    return mineflayer.supportedVersions;
+  }
+
+  return [];
 }
 
 function normalizeVersion(version) {
@@ -333,9 +337,14 @@ function registerIpcHandlers() {
       auth: account.auth,
       profilesFolder: path.join(app.getPath('userData'), 'profiles'),
       onMsaCode: (code) => {
-        const verifyUri = code?.verificationUri || 'https://microsoft.com/link';
-        const userCode = code?.userCode || 'unknown';
+        const verifyUri = code?.verificationUri || code?.verification_uri || 'https://microsoft.com/link';
+        const userCode = code?.userCode || code?.user_code || code?.deviceCode || 'unknown';
         emitStatus(`Microsoft login required. Open ${verifyUri} and enter code ${userCode}.`, 'warn');
+
+        if (userCode === 'unknown') {
+          emitStatus(`Microsoft login payload missing code: ${JSON.stringify(code || {})}`, 'warn');
+        }
+
         shell.openExternal(verifyUri).catch(() => {
           emitStatus('Could not automatically open browser for Microsoft login code.', 'warn');
         });
@@ -344,14 +353,30 @@ function registerIpcHandlers() {
 
     emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
 
-    if (options.version && !getSupportedVersions().includes(options.version)) {
+    const supportedVersions = getSupportedVersions();
+    if (options.version && supportedVersions.length && !supportedVersions.includes(options.version)) {
       emitStatus(
-        `Version ${options.version} is not in this build's supported list (${getSupportedVersions().join(', ')}). Trying anyway.`,
+        `Version ${options.version} is not in this build's supported list (${supportedVersions.join(', ')}). Trying anyway.`,
         'warn'
       );
     }
 
-    bot = mineflayer.createBot(options);
+    try {
+      bot = mineflayer.createBot(options);
+    } catch (error) {
+      const unsupportedVersion = /not supported/i.test(error.message || '');
+
+      if (options.version && unsupportedVersion) {
+        emitStatus(
+          `Version ${options.version} is unsupported by this Mineflayer build. Retrying with auto version detection...`,
+          'warn'
+        );
+        bot = mineflayer.createBot({ ...options, version: false });
+      } else {
+        throw error;
+      }
+    }
+
     attachBotEvents();
 
     store.set('preferences', {
