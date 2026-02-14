@@ -24,7 +24,9 @@ const fields = {
   serverSelect: document.getElementById('server-select'),
   accountSelect: document.getElementById('account-select'),
   connectBtn: document.getElementById('connect-btn'),
-  disconnectBtn: document.getElementById('disconnect-btn')
+  disconnectBtn: document.getElementById('disconnect-btn'),
+  updateInfo: document.getElementById('update-info'),
+  checkUpdateBtn: document.getElementById('check-update-btn')
 };
 
 function addStatus(message, type = 'info') {
@@ -52,7 +54,8 @@ function renderSelects() {
   fields.accountSelect.replaceChildren();
 
   state.servers.forEach((server) => {
-    fields.serverSelect.append(toOption(`${server.label} (${server.host}:${server.port})`, server.id));
+    const version = server.version || 'auto';
+    fields.serverSelect.append(toOption(`${server.label} (${server.host}:${server.port}, ${version})`, server.id));
   });
 
   state.accounts.forEach((account) => {
@@ -68,12 +71,24 @@ function renderSelects() {
   }
 }
 
+async function refreshUpdateInfo() {
+  try {
+    const mineflayerInfo = await window.api.getUpdateInfo();
+    fields.updateInfo.textContent =
+      `App auto-sync is ON. Mineflayer ${mineflayerInfo.currentVersion} (latest ${mineflayerInfo.latestVersion}). ` +
+      `Supported MC: ${mineflayerInfo.supportedVersions.join(', ')}`;
+  } catch (error) {
+    fields.updateInfo.textContent = `Could not load update info: ${error.message}`;
+  }
+}
+
 async function init() {
   const config = await window.api.getConfig();
   state.servers = config.servers;
   state.accounts = config.accounts;
   state.preferences = config.preferences;
   renderSelects();
+  await refreshUpdateInfo();
   addStatus('Launcher ready. Add/save profiles if needed, then connect.', 'success');
 }
 
@@ -136,6 +151,15 @@ fields.connectBtn.addEventListener('click', async () => {
 
 fields.disconnectBtn.addEventListener('click', async () => {
   await window.api.disconnectBot();
+});
+
+fields.checkUpdateBtn.addEventListener('click', async () => {
+  try {
+    await window.api.checkLauncherUpdates();
+    await refreshUpdateInfo();
+  } catch (error) {
+    addStatus(`Launcher update check failed: ${error.message}`, 'error');
+  }
 });
 
 fields.serverSelect.addEventListener('change', async () => {

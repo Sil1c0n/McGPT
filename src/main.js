@@ -1,11 +1,16 @@
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const mineflayer = require('mineflayer');
 
-let store;
+const execFileAsync = promisify(execFile);
+const AUTO_UPDATE_INTERVAL_MS = 10 * 60 * 1000;
 
+let store;
 let mainWindow;
 let bot;
+let autoUpdater;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -42,6 +47,155 @@ function emitStatus(message, type = 'info') {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('bot:status', { message, type, at: new Date().toISOString() });
   }
+}
+
+function getSupportedVersions() {
+  return mineflayer.supportedVersions || [];
+}
+
+function normalizeVersion(version) {
+  if (!version || version === 'auto') {
+    return false;
+  }
+
+  const normalized = String(version).trim();
+  const supportedVersions = getSupportedVersions();
+
+  if (supportedVersions.includes(normalized)) {
+    return normalized;
+  }
+
+  const withoutPatchZero = normalized.replace(/\.0+$/, '');
+  if (supportedVersions.includes(withoutPatchZero)) {
+    return withoutPatchZero;
+  }
+
+  const closest = supportedVersions.find((supportedVersion) => normalized.startsWith(supportedVersion));
+  if (closest) {
+    return closest;
+  }
+
+  return normalized;
+}
+
+function getNpmCommand() {
+  return process.platform === 'win32' ? 'npm.cmd' : 'npm';
+}
+
+async function getLatestMineflayerVersion() {
+  const npmCommand = getNpmCommand();
+  const { stdout } = await execFileAsync(npmCommand, ['view', 'mineflayer', 'version'], {
+    cwd: app.getAppPath(),
+    timeout: 20000
+  });
+
+  return stdout.trim();
+}
+
+async function checkForSourceUpdates() {
+  const appPath = app.getAppPath();
+
+  await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], {
+    cwd: appPath,
+    timeout: 5000
+  });
+
+  const { stdout } = await execFileAsync('git', ['pull', '--ff-only'], {
+    cwd: appPath,
+    timeout: 30000
+  });
+
+  const output = stdout.trim();
+  const updated = !output.toLowerCase().includes('already up to date');
+
+  return {
+    mode: 'source',
+    updated,
+    message: updated
+      ? 'Downloaded latest GitHub changes. Restart app to apply new code.'
+      : 'Already on latest GitHub commit.'
+  };
+}
+
+async function checkForPackagedUpdates() {
+  if (!autoUpdater) {
+    return {
+      mode: 'packaged',
+      updated: false,
+      message: 'Packaged updater is not configured.'
+    };
+  }
+
+  const result = await autoUpdater.checkForUpdates();
+  return {
+    mode: 'packaged',
+    updated: Boolean(result?.updateInfo?.version),
+    message: 'Checked GitHub releases for app updates.'
+  };
+}
+
+async function checkForAppUpdates() {
+  if (app.isPackaged) {
+    return checkForPackagedUpdates();
+  }
+
+  return checkForSourceUpdates();
+}
+
+function wirePackagedAutoUpdaterEvents() {
+  if (!autoUpdater) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('checking-for-update', () => emitStatus('Checking for launcher update...', 'info'));
+  autoUpdater.on('update-available', (info) => {
+    emitStatus(`Launcher update found (v${info.version}). Downloading automatically...`, 'warn');
+  });
+  autoUpdater.on('update-not-available', () => emitStatus('Launcher is up to date.', 'success'));
+  autoUpdater.on('download-progress', (progress) => {
+    emitStatus(`Launcher update download: ${Math.round(progress.percent)}%`, 'info');
+  });
+  autoUpdater.on('update-downloaded', () => {
+    emitStatus('Launcher update downloaded. It will install after you close the app.', 'success');
+  });
+  autoUpdater.on('error', (error) => emitStatus(`Launcher update error: ${error.message}`, 'error'));
+}
+
+async function setupLauncherAutoUpdates() {
+  if (app.isPackaged) {
+    try {
+      ({ autoUpdater } = require('electron-updater'));
+      wirePackagedAutoUpdaterEvents();
+      await checkForPackagedUpdates();
+      setInterval(() => {
+        checkForPackagedUpdates().catch((error) => emitStatus(`Updater check failed: ${error.message}`, 'error'));
+      }, AUTO_UPDATE_INTERVAL_MS);
+      return;
+    } catch (error) {
+      emitStatus(`Packaged updater unavailable: ${error.message}`, 'warn');
+    }
+  }
+
+  emitStatus('Development mode: syncing latest code from GitHub automatically.', 'info');
+  try {
+    const result = await checkForSourceUpdates();
+    emitStatus(result.message, result.updated ? 'warn' : 'success');
+  } catch (error) {
+    emitStatus(`GitHub sync failed: ${error.message}`, 'error');
+  }
+
+  setInterval(() => {
+    checkForSourceUpdates()
+      .then((result) => {
+        if (result.updated) {
+          emitStatus(result.message, 'warn');
+        }
+      })
+      .catch((error) => emitStatus(`GitHub sync failed: ${error.message}`, 'error'));
+  }, AUTO_UPDATE_INTERVAL_MS);
 }
 
 function disconnectBot() {
@@ -90,16 +244,35 @@ async function initializeStore() {
 function registerIpcHandlers() {
   ipcMain.handle('config:get', async () => getAllConfig());
 
+  ipcMain.handle('app:get-update-info', async () => {
+    const declaredVersion = require('../package.json').dependencies.mineflayer || '';
+    const currentVersion = String(declaredVersion).replace(/^[^0-9]*/, '');
+    const latestVersion = await getLatestMineflayerVersion();
+
+    return {
+      currentVersion,
+      latestVersion,
+      hasUpdate: currentVersion !== latestVersion,
+      supportedVersions: getSupportedVersions()
+    };
+  });
+
+  ipcMain.handle('app:check-launcher-updates', async () => {
+    const result = await checkForAppUpdates();
+    emitStatus(result.message, result.updated ? 'warn' : 'success');
+    return result;
+  });
+
   ipcMain.handle('servers:save', async (_, server) => {
     const servers = store.get('servers');
     const serverWithId = {
       ...server,
       id: server.id || toId(),
       port: Number(server.port || 25565),
-      version: server.version || false
+      version: normalizeVersion(server.version)
     };
 
-    const existingIndex = servers.findIndex((s) => s.id === serverWithId.id);
+    const existingIndex = servers.findIndex((savedServer) => savedServer.id === serverWithId.id);
     if (existingIndex >= 0) {
       servers[existingIndex] = serverWithId;
     } else {
@@ -118,7 +291,7 @@ function registerIpcHandlers() {
       auth: account.auth || 'offline'
     };
 
-    const existingIndex = accounts.findIndex((a) => a.id === accountWithId.id);
+    const existingIndex = accounts.findIndex((savedAccount) => savedAccount.id === accountWithId.id);
     if (existingIndex >= 0) {
       accounts[existingIndex] = accountWithId;
     } else {
@@ -155,12 +328,28 @@ function registerIpcHandlers() {
     const options = {
       host: server.host,
       port: Number(server.port || 25565),
-      version: server.version === 'auto' ? false : (server.version || false),
+      version: normalizeVersion(server.version),
       username: account.username,
-      auth: account.auth
+      auth: account.auth,
+      profilesFolder: path.join(app.getPath('userData'), 'profiles'),
+      onMsaCode: (code) => {
+        const verifyUri = code?.verificationUri || 'https://microsoft.com/link';
+        const userCode = code?.userCode || 'unknown';
+        emitStatus(`Microsoft login required. Open ${verifyUri} and enter code ${userCode}.`, 'warn');
+        shell.openExternal(verifyUri).catch(() => {
+          emitStatus('Could not automatically open browser for Microsoft login code.', 'warn');
+        });
+      }
     };
 
     emitStatus(`Connecting to ${options.host}:${options.port} as ${options.username} (${options.auth})...`);
+
+    if (options.version && !getSupportedVersions().includes(options.version)) {
+      emitStatus(
+        `Version ${options.version} is not in this build's supported list (${getSupportedVersions().join(', ')}). Trying anyway.`,
+        'warn'
+      );
+    }
 
     bot = mineflayer.createBot(options);
     attachBotEvents();
@@ -184,6 +373,7 @@ app.whenReady().then(async () => {
   await initializeStore();
   registerIpcHandlers();
   createWindow();
+  await setupLauncherAutoUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
