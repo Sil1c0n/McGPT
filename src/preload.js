@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   checkLauncherUpdates: () => ipcRenderer.invoke('app:check-launcher-updates'),
   saveServer: (server) => ipcRenderer.invoke('servers:save', server),
   saveAccount: (account) => ipcRenderer.invoke('accounts:save', account),
+  authenticateMicrosoftAccount: (payload) => ipcRenderer.invoke('accounts:authenticate-microsoft', payload),
   setPreferences: (preferences) => ipcRenderer.invoke('preferences:set', preferences),
   connectBot: (payload) => ipcRenderer.invoke('bot:connect', payload),
   disconnectBot: () => ipcRenderer.invoke('bot:disconnect'),

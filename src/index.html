@@ -46,7 +46,7 @@
           </label>
           <label>
             Username / Email
-            <input id="account-username" required placeholder="name@example.com or offline name" />
+            <input id="account-username" placeholder="Only needed for offline accounts" />
           </label>
           <label>
             Auth
@@ -55,7 +55,11 @@
               <option value="offline">offline</option>
             </select>
           </label>
-          <button type="submit">Save Account</button>
+          <div class="actions">
+            <button type="submit">Save Account</button>
+            <button type="button" id="account-auth-btn" class="secondary">Authenticate Microsoft & Save</button>
+          </div>
+          <p class="hint">Use "Authenticate Microsoft & Save" to sign in first, then choose that account when connecting to any server.</p>
         </form>
       </article>
     </section>

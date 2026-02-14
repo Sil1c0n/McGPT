@@ -21,6 +21,7 @@ const fields = {
   accountLabel: document.getElementById('account-label'),
   accountUsername: document.getElementById('account-username'),
   accountAuth: document.getElementById('account-auth'),
+  accountAuthBtn: document.getElementById('account-auth-btn'),
   serverSelect: document.getElementById('server-select'),
   accountSelect: document.getElementById('account-select'),
   connectBtn: document.getElementById('connect-btn'),
@@ -115,12 +116,22 @@ formServer.addEventListener('submit', async (event) => {
 formAccount.addEventListener('submit', async (event) => {
   event.preventDefault();
 
+  const auth = fields.accountAuth.value;
   const account = {
     id: fields.accountId.value || undefined,
     label: fields.accountLabel.value.trim(),
     username: fields.accountUsername.value.trim(),
-    auth: fields.accountAuth.value
+    auth
   };
+
+  if (auth === 'offline' && !account.username) {
+    addStatus('Offline accounts require a username.', 'warn');
+    return;
+  }
+
+  if (auth === 'microsoft' && !account.username) {
+    addStatus('Tip: use "Authenticate Microsoft & Save" to sign in and save this account automatically.', 'info');
+  }
 
   state.accounts = await window.api.saveAccount(account);
   renderSelects();
@@ -128,6 +139,28 @@ formAccount.addEventListener('submit', async (event) => {
   formAccount.reset();
   fields.accountAuth.value = 'microsoft';
   addStatus(`Saved account profile: ${account.label}`, 'success');
+});
+
+
+fields.accountAuthBtn.addEventListener('click', async () => {
+  const label = fields.accountLabel.value.trim();
+
+  fields.accountAuthBtn.disabled = true;
+  try {
+    const result = await window.api.authenticateMicrosoftAccount({ label });
+    state.accounts = result.accounts;
+    state.preferences.selectedAccountId = result.account.id;
+    await window.api.setPreferences(state.preferences);
+    renderSelects();
+    fields.accountId.value = '';
+    formAccount.reset();
+    fields.accountAuth.value = 'microsoft';
+    addStatus(`Microsoft account ready: ${result.account.label}`, 'success');
+  } catch (error) {
+    addStatus(`Microsoft authentication failed: ${error.message}`, 'error');
+  } finally {
+    fields.accountAuthBtn.disabled = false;
+  }
 });
 
 fields.connectBtn.addEventListener('click', async () => {
